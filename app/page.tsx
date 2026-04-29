@@ -985,16 +985,16 @@ export default function Home() {
         return { ...t, y: tr.top, heightPx: tr.height };
       });
 
-      // Forgiving mode: do not fail run on late misses; just clear passed tiles.
+      // Strict mode: missing any tile ends the run.
       const graceElapsed =
         performance.now() - runStartMsRef.current >= START_GRACE_SEC * 1000;
       if (graceElapsed) {
-        const before = buf.length;
         const lateCutoff = songTime - TIMING_BY_DIFF[difficultyRef.current].hitLate;
-        buf = buf.filter((t) => t.kind !== "tap" || t.hitAtSec >= lateCutoff);
-        if (buf.length < before) {
-          comboRef.current = 0;
-          setCombo(0);
+        for (const t of buf) {
+          if (t.kind === "tap" && t.hitAtSec < lateCutoff) {
+            queueMicrotask(() => void failRun());
+            return buf;
+          }
         }
       }
 
