@@ -485,24 +485,17 @@ function noteBottomY(songTime: number, hitAtSec: number, hitLineY: number, dur: 
   return hitLineY - integratedScrollDist(songTime, hitAtSec, dur, v0);
 }
 
-function holdHeightPx(startSec: number, endSec: number, dur: number, v0: number): number {
-  return Math.max(TILE_H, integratedScrollDist(startSec, endSec, dur, v0));
-}
-
 function tileRect(
   kind: TileKind,
   hitAtSec: number,
-  holdEndSec: number | undefined,
+  _holdEndSec: number | undefined,
   songTime: number,
   hitLineY: number,
   dur: number,
   v0: number,
 ): { top: number; height: number; bottomY: number } {
   const bottomY = noteBottomY(songTime, hitAtSec, hitLineY, dur, v0);
-  if (kind === "hold" && holdEndSec !== undefined) {
-    const h = holdHeightPx(hitAtSec, holdEndSec, dur, v0);
-    return { top: bottomY - h, height: h, bottomY };
-  }
+  void kind;
   return { top: bottomY - TILE_H, height: TILE_H, bottomY };
 }
 
@@ -950,18 +943,16 @@ export default function Home() {
     if (songTime >= 0 && !trackEnded) {
       while (idx < map.length) {
         const ev = map[idx]!;
-        const kind = ev.kind;
-        const holdEnd = ev.kind === "hold" ? ev.end : undefined;
-        const tr = tileRect(kind, ev.t, holdEnd, songTime, hitLineY, dur, v0);
+        const tr = tileRect(ev.kind, ev.t, undefined, songTime, hitLineY, dur, v0);
         // Spawn only when tile top reaches the arena entry line, so notes always come from top.
         if (tr.top < SPAWN_TOP_Y) break;
         batch.push({
           id: tileId.current++,
           lane: ev.lane,
           beat: idx,
-          kind,
+          kind: ev.kind,
           hitAtSec: ev.t,
-          holdEndSec: holdEnd,
+          holdEndSec: undefined,
           y: tr.top,
           heightPx: tr.height,
         });
