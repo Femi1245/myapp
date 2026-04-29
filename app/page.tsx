@@ -951,8 +951,6 @@ export default function Home() {
     const distToHitPx = hitLineY + TILE_H + 8;
     const baseSpeed = distToHitPx / Math.max(approachSec, 0.1);
     const v0 = clamp(baseSpeed * (song.scrollMult ?? 1), difficultyRef.current === "easy" ? 125 : 145, difficultyRef.current === "easy" ? 210 : 260);
-    const missLate = TIMING_BY_DIFF[difficultyRef.current].hitLate;
-
     const map = activeBeatMapRef.current;
     let idx = nextEventIdxRef.current;
     const batch: Tile[] = [];
@@ -987,23 +985,16 @@ export default function Home() {
         return { ...t, y: tr.top, heightPx: tr.height };
       });
 
-      let failScheduled = false;
-      const scheduleFail = () => {
-        if (failScheduled || levelOutcomeRef.current !== "none") return;
-        failScheduled = true;
-        queueMicrotask(() => void failRun());
-      };
-
+      // Forgiving mode: do not fail run on late misses; just clear passed tiles.
       const graceElapsed =
         performance.now() - runStartMsRef.current >= START_GRACE_SEC * 1000;
-      for (const t of buf) {
-        if (
-          graceElapsed &&
-          t.kind === "tap" &&
-          songTime > t.hitAtSec + missLate
-        ) {
-          scheduleFail();
-          return buf;
+      if (graceElapsed) {
+        const before = buf.length;
+        const lateCutoff = songTime - TIMING_BY_DIFF[difficultyRef.current].hitLate;
+        buf = buf.filter((t) => t.kind !== "tap" || t.hitAtSec >= lateCutoff);
+        if (buf.length < before) {
+          comboRef.current = 0;
+          setCombo(0);
         }
       }
 
@@ -1064,6 +1055,7 @@ export default function Home() {
 
   const onLanePointerDown = (lane: number) => {
     if (screen !== "playing") return;
+    if (audioStalled) void unlockGameAudio();
     const songTimeNow = getSongTimeSec(ytPlayerRef.current, ytReadyRef.current, lastSongTimeRef.current);
 
     const h = arenaH.current;
@@ -1071,13 +1063,23 @@ export default function Home() {
     const hitBottom = h * HIT_BOTTOM_RATIO;
 
     let target: Tile | null = null;
+    let nearest: Tile | null = null;
+    let nearestDist = Number.POSITIVE_INFINITY;
     for (const t of tilesRef.current) {
       if (t.lane !== lane) continue;
+      const dist = Math.abs(songTimeNow - t.hitAtSec);
+      if (dist < nearestDist) {
+        nearestDist = dist;
+        nearest = t;
+      }
       if (!(t.y < hitBottom && t.y + t.heightPx > hitTop)) continue;
       if (!target || t.y > target.y) target = t;
     }
 
     // Mistaps are ignored; the run fails only when a tile is truly missed by time.
+    if (!target) {
+      target = nearest;
+    }
     if (!target) {
       return;
     }
@@ -1417,6 +1419,7 @@ export default function Home() {
                       e.preventDefault();
                       onLanePointerDown(i);
                     }}
+                    onClick={() => onLanePointerDown(i)}
                     className="h-full flex-1 touch-none border-l border-white/10 first:border-l-0 active:bg-white/10"
                     disabled={screen !== "playing"}
                     aria-label={`lane-${i + 1}`}
@@ -1431,11 +1434,11 @@ export default function Home() {
               )}
 
               {screen === "playing" && audioStalled && (
-                <div className="absolute inset-0 z-[35] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
+                <div className="pointer-events-none absolute inset-x-0 top-3 z-[35] flex justify-center px-4">
                   <button
                     type="button"
                     onClick={() => void unlockGameAudio()}
-                    className="max-w-sm rounded-xl border border-white/30 bg-white/15 px-5 py-4 text-center backdrop-blur-xl shadow-[0_0_24px_rgba(251,191,36,0.25)]"
+                    className="pointer-events-auto max-w-sm rounded-xl border border-white/30 bg-black/55 px-5 py-3 text-center backdrop-blur-xl shadow-[0_0_24px_rgba(251,191,36,0.25)]"
                   >
                     <p className="text-lg font-semibold text-amber-200">Tap to start music</p>
                     <p className="mt-1 text-xs text-white/70">Your browser blocked autoplay. One tap unlocks the track.</p>
