@@ -641,11 +641,11 @@ export default function Home() {
   const nextEventIdxRef = useRef(0);
   const completeLevelRef = useRef<() => Promise<void>>(async () => {});
   const lastSongTimeRef = useRef(0);
+  const runStartMsRef = useRef(0);
   const holdActiveRef = useRef<{ tileId: number; endSec: number; lane: number } | null>(null);
   const holdPointerCleanupRef = useRef<(() => void) | null>(null);
   const holdStartedIdsRef = useRef<Set<number>>(new Set());
   const levelOutcomeRef = useRef<"none" | "fail" | "complete">("none");
-  const runStartMsRef = useRef(0);
 
   const [save, setSave] = useState<SaveData>({
     bestBySong: {},
@@ -817,6 +817,7 @@ export default function Home() {
       // Keep gameplay alive even if YT API is still warming up.
       activeBeatMapRef.current = filterDifficulty(resolveBeatMap(song, FALLBACK_SONG_SEC, difficultyRef.current));
       nextEventIdxRef.current = 0;
+      setAudioStalled(true);
       return;
     }
 
@@ -841,15 +842,27 @@ export default function Home() {
   };
 
   const unlockGameAudio = async () => {
-    const raw = ytPlayerRef.current;
-    const p = isYTPlayerLike(raw) ? raw : null;
-    if (!p || !ytReadyRef.current) return;
-    setAudioStalled(false);
+    let raw = ytPlayerRef.current;
+    let p = isYTPlayerLike(raw) ? raw : null;
+    if (!p || !ytReadyRef.current) {
+      const ensured = await waitForYTPlayerRef(() => ytPlayerRef.current, 6000);
+      if (ensured) ytPlayerRef.current = ensured;
+      raw = ytPlayerRef.current;
+      p = isYTPlayerLike(raw) ? raw : null;
+      if (!p || !ytReadyRef.current) {
+        setAudioStalled(true);
+        return;
+      }
+    }
     try {
+      const song = selectedSongRef.current;
+      p.loadVideoById(song.youtubeId, Math.max(0, lastSongTimeRef.current));
       p.playVideo();
       await fadeYTVolume(p, saveRef.current.gameVolume, 220);
+      setAudioStalled(false);
     } catch {
       /* ignore */
+      setAudioStalled(true);
     }
   };
 
@@ -912,12 +925,16 @@ export default function Home() {
     }
     const state = p ? p.getPlayerState() : -1;
     const trackEnded = Boolean(window.YT && state === window.YT.PlayerState.ENDED);
-    let songTime = -1;
+    const fallbackSongTime = Math.max(
+      0,
+      (performance.now() - runStartMsRef.current) / 1000
+    );
+    let songTime = fallbackSongTime;
     if (p) {
       const ct = p.getCurrentTime();
-      if (Number.isFinite(ct)) songTime = Math.max(0, ct);
+      if (Number.isFinite(ct) && ct >= 0) songTime = Math.max(0, ct);
     }
-    if (songTime >= 0) lastSongTimeRef.current = songTime;
+    lastSongTimeRef.current = songTime;
 
     const progressSec = trackEnded && dur > 0 ? dur : songTime >= 0 ? songTime : 0;
     const progress01 = songProgress01(progressSec, dur);
@@ -940,7 +957,7 @@ export default function Home() {
     let idx = nextEventIdxRef.current;
     const batch: Tile[] = [];
 
-    if (songTime >= 0 && !trackEnded) {
+    if (!trackEnded) {
       while (idx < map.length) {
         const ev = map[idx]!;
         const tr = tileRect(ev.kind, ev.t, undefined, songTime, hitLineY, dur, v0);
@@ -963,7 +980,7 @@ export default function Home() {
 
     setTiles((prevTiles) => {
       let buf = [...prevTiles, ...batch];
-      if (songTime < 0 || trackEnded) return buf;
+      if (trackEnded) return buf;
 
       buf = buf.map((t) => {
         const tr = tileRect(t.kind, t.hitAtSec, t.holdEndSec, songTime, hitLineY, dur, v0);
@@ -1040,6 +1057,8 @@ export default function Home() {
       const st = p.getPlayerState();
       const buf = ytApi.PlayerState.BUFFERING ?? 3;
       if (st !== ytApi.PlayerState.PLAYING && st !== buf) setAudioStalled(true);
+    } else {
+      setAudioStalled(true);
     }
   };
 
